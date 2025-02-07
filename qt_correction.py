@@ -47,7 +47,7 @@ method = st.selectbox("Méthode de correction", ["Bazett", "Fridericia", "Framin
 
 if st.button("Calculer QTc"):
     rr = 60 / fc  # Intervalle RR en secondes
-    qtc = calculate_qtc(qt, rr, method) * 1000  # Conversion en ms
+    qtc = calculate_qtc(qt, rr, method) / 1000  # Conversion en ms
     
     st.success(f"QTc ({method}) = {qtc:.1f} ms")
     
