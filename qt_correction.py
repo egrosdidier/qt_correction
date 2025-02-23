@@ -36,7 +36,7 @@ def plot_qtc_distribution(qtc):
 # Interface Streamlit
 st.title("Calcul du QT corrigé (QTc)")
 st.markdown("<p style='font-size:12px; font-style:italic;'>Dr Etienne Grosdidier, février 2025</p>", unsafe_allow_html=True)
-st.title("-----------------------")
+st.markdown("<p style='font-size:12px;'>____________________________________</p>", unsafe_allow_html=True)
 
 qt_input_type = st.radio("Choisir la méthode de saisie du QT", ["Millisecondes", "Petits carreaux"])
 qt = st.number_input("QT", min_value=0.0, format="%.1f")
