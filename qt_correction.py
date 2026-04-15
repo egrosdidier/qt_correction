@@ -1,57 +1,168 @@
 import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
+import pandas as pd
+import os
+import datetime
+import hashlib
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
 
-def calculate_qtc(qt, rr, method="Bazett"):
+st.set_page_config(page_title="QTc CSAPA MASTER", layout="wide")
+
+# =====================
+# UTILS
+# =====================
+
+def pseudonymize(text):
+    return hashlib.sha256(text.encode()).hexdigest()[:10]
+
+
+def calculate_qtc(qt_ms, rr_s, method):
+    qt = qt_ms / 1000
     if method == "Bazett":
-        return qt / np.sqrt(rr)
+        return (qt / np.sqrt(rr_s)) * 1000
     elif method == "Fridericia":
-        return qt / (rr ** (1/3))
+        return (qt / (rr_s ** (1/3))) * 1000
     elif method == "Framingham":
-        return qt + 0.154 * (1 - rr)
+        return (qt + 0.154 * (1 - rr_s)) * 1000
     elif method == "Hodges":
-        return qt + 1.75 * (60 / rr - 60)
+        return (qt + (1.75 * (60/rr_s - 60))/1000) * 1000
+
+
+def interpret(qtc, sexe):
+    if (sexe == "Homme" and qtc < 450) or (sexe == "Femme" and qtc < 470):
+        return "🟢 QTc normal"
+    elif qtc < 480:
+        return "🟡 QTc limite"
+    elif qtc < 500:
+        return "🟠 QTc prolongé"
     else:
-        raise ValueError("Méthode non reconnue")
+        return "🔴 QTc à haut risque (TdP)"
 
-def plot_qtc_distribution(qtc):
-    x = np.linspace(300, 550, 100)
-    mean_qtc = 400
-    std_qtc = 30
-    y = (1 / (std_qtc * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x - mean_qtc) / std_qtc) ** 2)
+# =====================
+# HEADER
+# =====================
+st.title("🫀 QTc CSAPA – VERSION MASTER")
+st.markdown("Outil expert – addictologie cardiovasculaire")
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(x, y, label="Distribution normale du QTc")
-    ax.axvline(qtc, color='r', linestyle='--', label=f"QTc mesuré: {qtc:.1f} ms")
-    ax.fill_between(x, y, where=(x >= 450), color='red', alpha=0.3, label="Risque accru (>450 ms)")
-    ax.fill_between(x, y, where=(x <= 350), color='blue', alpha=0.3, label="QTc court (<350 ms)")
-    ax.set_xlabel("QTc (ms)")
-    ax.set_ylabel("Densité de probabilité")
-    ax.set_title("QTc et courbe de distribution du risque")
-    ax.legend()
-    ax.grid()
-    
-    return fig
+mode = st.radio("Mode", ["Clinique", "Rapide", "Pédagogique"])
 
-# Interface Streamlit
-st.title("Calcul du QT corrigé (QTc)")
-st.markdown("<p style='font-size:12px; font-style:italic;'>Dr Etienne Grosdidier, février 2025</p>", unsafe_allow_html=True)
-st.markdown("<p style='font-size:12px;'>___________________________________________________________________________________</p>", unsafe_allow_html=True)
+# =====================
+# INPUT
+# =====================
+col1, col2 = st.columns(2)
+with col1:
+    patient_name = st.text_input("Identifiant patient")
+    sexe = st.radio("Sexe", ["Homme", "Femme"])
+with col2:
+    date = st.date_input("Date", datetime.date.today())
 
-qt_input_type = st.radio("Choisir la méthode de saisie du QT", ["Millisecondes", "Petits carreaux"])
-qt = st.number_input("QT", min_value=0.0, format="%.1f")
-if qt_input_type == "Petits carreaux":
-    qt *= 40  # Conversion des petits carreaux en millisecondes
+qt = st.number_input("QT (ms)", min_value=0.0, help="Mesuré du début QRS à la fin de T")
+fc = st.number_input("Fréquence cardiaque", min_value=1.0)
+rr = 60 / fc if fc > 0 else 0
 
-fc = st.number_input("Fréquence cardiaque (BPM)", min_value=1.0, format="%.1f")
-sexe = st.radio("Sexe", ["Homme", "Femme"])
-method = st.selectbox("Méthode de correction", ["Bazett", "Fridericia", "Framingham", "Hodges"])
+method = st.selectbox("Méthode", ["Bazett", "Fridericia", "Framingham", "Hodges"])
 
-if st.button("Calculer QTc"):
-    rr = 60 / fc  # Intervalle RR en secondes
-    qtc = calculate_qtc(qt, rr, method)  # Conversion en ms
-    
-    st.success(f"QTc ({method}) = {qtc:.1f} ms")
-    
-    fig = plot_qtc_distribution(qtc)
-    st.pyplot(fig)
+# =====================
+# CALCUL
+# =====================
+if st.button("Analyser"):
+
+    patient_id = pseudonymize(patient_name)
+    qtc = calculate_qtc(qt, rr, method)
+    conclusion = interpret(qtc, sexe)
+
+    st.metric("QTc", f"{qtc:.1f} ms")
+    st.subheader("Interprétation")
+    st.write(conclusion)
+
+    # =====================
+    # PEDAGOGICAL MODE
+    # =====================
+    if mode == "Pédagogique":
+        st.info("Le QTc corrige le QT en fonction de la fréquence cardiaque. Bazett surestime à FC élevée.")
+
+    # =====================
+    # FACTEURS
+    # =====================
+    if mode != "Rapide":
+        st.subheader("Facteurs de risque")
+        k = st.number_input("K+", value=4.0, help="Objectif ≥ 4.0")
+        mg = st.number_input("Mg", value=0.8, help="Objectif ≥ 0.8")
+        dfg = st.number_input("DFG", value=90)
+
+        alerts = []
+        if k < 3.5: alerts.append("Hypokaliémie")
+        if mg < 0.7: alerts.append("Hypomagnésémie")
+        if dfg < 30: alerts.append("Insuffisance rénale sévère")
+
+        for a in alerts:
+            st.warning(a)
+
+    # =====================
+    # DECISION
+    # =====================
+    st.subheader("Conduite à tenir")
+    if qtc >= 500:
+        decision = "Urgence : correction ionique + ECG 12 dérivations + avis cardiologique"
+        st.error(decision)
+    elif qtc >= 480:
+        decision = "Corriger facteurs + recontrôle ECG"
+        st.warning(decision)
+    else:
+        decision = "Surveillance"
+        st.success(decision)
+
+    # =====================
+    # SAVE
+    # =====================
+    file_path = "patients_master.csv"
+
+    data = {
+        "Date": date,
+        "Patient": patient_id,
+        "QTc": round(qtc,1),
+        "Conclusion": conclusion
+    }
+
+    df_new = pd.DataFrame([data])
+
+    if os.path.exists(file_path):
+        df = pd.read_csv(file_path)
+        df = pd.concat([df, df_new], ignore_index=True)
+    else:
+        df = df_new
+
+    df.to_csv(file_path, index=False)
+
+    # =====================
+    # HISTORY
+    # =====================
+    if os.path.exists(file_path):
+        df = pd.read_csv(file_path)
+        df_p = df[df["Patient"] == patient_id]
+        if not df_p.empty:
+            st.line_chart(df_p["QTc"])
+
+    # =====================
+    # PDF EXPORT
+    # =====================
+    if st.button("Générer PDF"):
+        doc = SimpleDocTemplate("rapport_master.pdf")
+        styles = getSampleStyleSheet()
+
+        content = []
+        content.append(Paragraph("Compte rendu QTc – CSAPA", styles['Title']))
+        content.append(Spacer(1,12))
+        content.append(Paragraph(f"Date : {date}", styles['Normal']))
+        content.append(Paragraph(f"Patient ID : {patient_id}", styles['Normal']))
+        content.append(Paragraph(f"QTc : {qtc:.1f} ms", styles['Normal']))
+        content.append(Paragraph(f"Conclusion : {conclusion}", styles['Normal']))
+        content.append(Paragraph(f"Conduite : {decision}", styles['Normal']))
+
+        doc.build(content)
+
+        with open("rapport_master.pdf", "rb") as f:
+            st.download_button("Télécharger PDF", f, file_name="rapport_master.pdf")
+
+st.caption("Version MASTER – outil expert CSAPA")
